@@ -348,5 +348,33 @@ class Database:
         }
 
 
+def get_database(use_api: bool = None):
+    """
+    Get the appropriate database instance.
+    
+    Set environment variable USE_API=true to use REST API (localhost:3000).
+    Otherwise uses in-memory database.
+    
+    :param use_api: Override environment variable setting
+    :return: Database instance (either in-memory or API-based)
+    """
+    import os
+    
+    if use_api is None:
+        use_api = os.getenv('USE_API', 'false').lower() == 'true'
+    
+    if use_api:
+        try:
+            from .api_db import api_db
+            print("Using REST API database (localhost:3000)")
+            return api_db
+        except ImportError as e:
+            print(f"API database not available ({e}), falling back to in-memory database")
+            return Database()
+    
+    return Database()
+
+
 # Create a global database instance that can be imported by tools
-db = Database()
+# Set USE_API=true environment variable to use REST API at localhost:3000
+db = get_database()
