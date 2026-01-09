@@ -2,28 +2,32 @@
 API service for handling UI card actions and routing to appropriate agents.
 
 This module provides the interface between the frontend UI and the agent system.
-It handles action codes from card clicks and routes them to the correct sub-agent.
+It directly calls agent tools based on action codes for fast, predictable responses.
+
+Flow:
+1. UI sends action code + parameters (listing_id, owner_id, etc.)
+2. Service looks up which tool to call
+3. Service calls the tool directly and returns JSON
+4. For PRICING_APPLY, the tool updates the database
 """
 
 from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+import json
 
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
-
-from .action_codes import ActionCode, get_action_config, get_target_agent
-from ..agent import root_agent
-
-
-# Initialize session service and runner
-session_service = InMemorySessionService()
-
-runner = Runner(
-    agent=root_agent,
-    app_name="iShare_Dashboard",
-    session_service=session_service,
+from .action_codes import (
+    ActionCode, 
+    get_action_config, 
+    get_target_agent, 
+    get_required_params,
+    has_action_button,
+    is_write_action
 )
+
+# Import the tool functions directly
+from ..sub_agents.pricing_agent import analyze_pricing, apply_price_change
+from ..sub_agents.demand_agent import analyze_market_trends
+from ..sub_agents.review_agent import analyze_reviews
 
 
 @dataclass
@@ -32,49 +36,50 @@ class CardActionRequest:
     Request model for card action.
     
     Attributes:
-        action_code: The action code from the UI card (e.g., "DEMAND_001")
-        listing_id: The listing ID this action relates to
-        user_id: The user making the request
-        additional_context: Optional dict with extra context (e.g., car_name, percentages)
+        action_code: The action code from the UI card (e.g., "PRICING_ANALYZE")
+        listing_id: The listing ID (for pricing and review agents)
+        owner_id: The owner ID (for demand agent)
+        new_price: New price to apply (for PRICING_APPLY action)
     """
     action_code: str
-    listing_id: str
-    user_id: str = "default_user"
-    additional_context: Optional[Dict[str, Any]] = None
+    listing_id: Optional[str] = None
+    owner_id: Optional[int] = None
+    new_price: Optional[float] = None
 
 
-@dataclass
+@dataclass 
 class CardActionResponse:
     """
     Response model for card action.
     
     Attributes:
         success: Whether the action was processed successfully
-        agent_response: The text response from the agent
-        target_agent: Which agent handled the request
         action_code: The action code that was processed
-        session_id: Session ID for follow-up conversations
+        agent: Which agent handled the request
+        data: The JSON response from the agent tool
+        show_action_button: Whether to show "Take Action" button
+        error: Error message if failed
     """
     success: bool
-    agent_response: str
-    target_agent: str
     action_code: str
-    session_id: str
+    agent: str
+    data: Dict[str, Any]
+    show_action_button: bool = False
     error: Optional[str] = None
 
 
-async def process_card_action(request: CardActionRequest) -> CardActionResponse:
+def process_card_action(request: CardActionRequest) -> CardActionResponse:
     """
-    Process a card action from the UI.
+    Process a card action from the UI by directly calling the appropriate tool.
     
     This function:
     1. Looks up the action code configuration
-    2. Builds the appropriate prompt with context
-    3. Routes to the correct sub-agent via the root agent
-    4. Returns the agent's response
+    2. Validates required parameters
+    3. Calls the appropriate tool function directly
+    4. Returns the JSON response
     
     :param request: CardActionRequest with action details
-    :return: CardActionResponse with agent's response
+    :return: CardActionResponse with tool's JSON response
     """
     try:
         # Get action configuration
@@ -83,122 +88,122 @@ async def process_card_action(request: CardActionRequest) -> CardActionResponse:
         if not config:
             return CardActionResponse(
                 success=False,
-                agent_response="",
-                target_agent="",
                 action_code=request.action_code,
-                session_id="",
+                agent="",
+                data={},
                 error=f"Unknown action code: {request.action_code}"
             )
         
-        target_agent = config["agent"]
+        agent_name = config["agent"]
+        tool_name = config["tool"]
         
-        # Build the prompt with context
-        context_data = {
-            "listing_id": request.listing_id,
-            **(request.additional_context or {})
-        }
-        
-        # Format the context template if all required fields are present
-        try:
-            context_message = config["context_template"].format(**context_data)
-        except KeyError:
-            context_message = f"Analyzing listing {request.listing_id}"
-        
-        # Build the full prompt that routes to the specific agent
-        prompt = f"""
-[ACTION CODE: {request.action_code}]
-[TARGET AGENT: {target_agent}]
-[LISTING ID: {request.listing_id}]
-
-Context: {context_message}
-
-User request: {config["default_prompt"]}
-
-Please route this directly to {target_agent} for listing {request.listing_id}.
-"""
-        
-        # Create or get session
-        session_id = f"session_{request.user_id}_{request.listing_id}"
-        session = await session_service.get_session(
-            app_name="iShare_Dashboard",
-            user_id=request.user_id,
-            session_id=session_id
-        )
-        
-        if session is None:
-            session = await session_service.create_session(
-                app_name="iShare_Dashboard",
-                user_id=request.user_id,
-                session_id=session_id
+        # Route to appropriate tool based on action code
+        if request.action_code == ActionCode.PRICING_ANALYZE.value or request.action_code == ActionCode.PRICING_ANALYZE:
+            # Pricing Analysis - requires listing_id
+            if not request.listing_id:
+                return CardActionResponse(
+                    success=False,
+                    action_code=request.action_code,
+                    agent=agent_name,
+                    data={},
+                    error="listing_id is required for pricing analysis"
+                )
+            
+            result = analyze_pricing(request.listing_id)
+            
+            # Show action button if price change is recommended
+            show_button = result.get("can_take_action", False)
+            
+            return CardActionResponse(
+                success=True,
+                action_code=request.action_code,
+                agent=agent_name,
+                data=result,
+                show_action_button=show_button
             )
         
-        # Run the agent
-        content = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=prompt)]
-        )
+        elif request.action_code == ActionCode.PRICING_APPLY.value or request.action_code == ActionCode.PRICING_APPLY:
+            # Apply Price Change - requires listing_id and new_price
+            if not request.listing_id or request.new_price is None:
+                return CardActionResponse(
+                    success=False,
+                    action_code=request.action_code,
+                    agent=agent_name,
+                    data={},
+                    error="listing_id and new_price are required to apply price change"
+                )
+            
+            result = apply_price_change(request.listing_id, request.new_price)
+            
+            return CardActionResponse(
+                success=result.get("success", False),
+                action_code=request.action_code,
+                agent=agent_name,
+                data=result,
+                show_action_button=False
+            )
         
-        response_text = ""
-        async for event in runner.run_async(
-            user_id=request.user_id,
-            session_id=session_id,
-            new_message=content
-        ):
-            if hasattr(event, 'content') and event.content:
-                if hasattr(event.content, 'parts'):
-                    for part in event.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            response_text += part.text
+        elif request.action_code == ActionCode.MARKET_ANALYZE.value or request.action_code == ActionCode.MARKET_ANALYZE:
+            # Market Trend Analysis - requires owner_id
+            if not request.owner_id:
+                return CardActionResponse(
+                    success=False,
+                    action_code=request.action_code,
+                    agent=agent_name,
+                    data={},
+                    error="owner_id is required for market analysis"
+                )
+            
+            result = analyze_market_trends(request.owner_id)
+            
+            return CardActionResponse(
+                success=True,
+                action_code=request.action_code,
+                agent=agent_name,
+                data=result,
+                show_action_button=False
+            )
         
-        return CardActionResponse(
-            success=True,
-            agent_response=response_text,
-            target_agent=target_agent,
-            action_code=request.action_code,
-            session_id=session_id
-        )
+        elif request.action_code == ActionCode.REVIEW_ANALYZE.value or request.action_code == ActionCode.REVIEW_ANALYZE:
+            # Review Analysis - requires listing_id
+            if not request.listing_id:
+                return CardActionResponse(
+                    success=False,
+                    action_code=request.action_code,
+                    agent=agent_name,
+                    data={},
+                    error="listing_id is required for review analysis"
+                )
+            
+            result = analyze_reviews(request.listing_id)
+            
+            return CardActionResponse(
+                success=True,
+                action_code=request.action_code,
+                agent=agent_name,
+                data=result,
+                show_action_button=False
+            )
+        
+        else:
+            return CardActionResponse(
+                success=False,
+                action_code=request.action_code,
+                agent="",
+                data={},
+                error=f"Unhandled action code: {request.action_code}"
+            )
         
     except Exception as e:
         return CardActionResponse(
             success=False,
-            agent_response="",
-            target_agent="",
             action_code=request.action_code,
-            session_id="",
+            agent="",
+            data={},
             error=str(e)
         )
 
 
-def build_direct_agent_prompt(action_code: str, listing_id: str, **context) -> Dict[str, Any]:
-    """
-    Build a prompt structure for direct agent invocation.
-    
-    This is useful when you want to get the prompt details without 
-    actually calling the agent (e.g., for frontend preview).
-    
-    :param action_code: The action code
-    :param listing_id: The listing ID
-    :param context: Additional context parameters
-    :return: Dictionary with prompt details
-    """
-    config = get_action_config(action_code)
-    
-    if not config:
-        return {"error": f"Unknown action code: {action_code}"}
-    
-    context_data = {"listing_id": listing_id, **context}
-    
-    try:
-        context_message = config["context_template"].format(**context_data)
-    except KeyError:
-        context_message = f"Analyzing listing {listing_id}"
-    
-    return {
-        "action_code": action_code,
-        "target_agent": config["agent"],
-        "prompt": config["default_prompt"],
-        "context": context_message,
-        "card_type": config["card_type"],
-        "description": config["action_description"],
-        "listing_id": listing_id
-    }
+def response_to_dict(response: CardActionResponse) -> Dict[str, Any]:
+    """Convert CardActionResponse to dictionary for JSON serialization."""
+    return asdict(response)

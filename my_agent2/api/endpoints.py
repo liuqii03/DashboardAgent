@@ -2,6 +2,12 @@
 FastAPI endpoints for the Dashboard Agent.
 
 This module provides REST API endpoints for the UI to interact with the agent system.
+
+Endpoints:
+- POST /pricing/analyze - Analyze pricing for a listing
+- POST /pricing/apply - Apply price change (Take Action)
+- POST /market/analyze - Analyze market trends for an owner
+- POST /review/analyze - Analyze reviews for a listing
 """
 
 import os
@@ -13,20 +19,21 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from .action_codes import ActionCode, ACTION_CODE_CONFIG
 from .agent_service import (
     CardActionRequest,
+    CardActionResponse,
     process_card_action,
-    build_direct_agent_prompt
+    response_to_dict
 )
 
 
 app = FastAPI(
     title="iShare Dashboard Agent API",
     description="API for integrating the dashboard agent with the UI",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Enable CORS for frontend integration
@@ -39,188 +46,195 @@ app.add_middleware(
 )
 
 
-# Pydantic models for API requests/responses
-class CardActionRequestModel(BaseModel):
-    """Request model for card action endpoint."""
-    action_code: str
+# ============ Request Models ============
+
+class PricingAnalyzeRequest(BaseModel):
+    """Request to analyze pricing for a listing."""
     listing_id: str
-    user_id: str = "default_user"
-    additional_context: Optional[Dict[str, Any]] = None
     
     class Config:
         json_schema_extra = {
             "example": {
-                "action_code": "DEMAND_001",
-                "listing_id": "veh001",
-                "user_id": "user_123",
-                "additional_context": {
-                    "car_name": "Honda City 2020",
-                    "demand_percent": 20
-                }
+                "listing_id": "fdc645fe-c17a-48c6-9ad5-44a908238694"
             }
         }
 
 
-class CardActionResponseModel(BaseModel):
-    """Response model for card action endpoint."""
+class PricingApplyRequest(BaseModel):
+    """Request to apply price change."""
+    listing_id: str
+    new_price: float
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "listing_id": "fdc645fe-c17a-48c6-9ad5-44a908238694",
+                "new_price": 110.00
+            }
+        }
+
+
+class MarketAnalyzeRequest(BaseModel):
+    """Request to analyze market trends for an owner."""
+    owner_id: int
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "owner_id": 1
+            }
+        }
+
+
+class ReviewAnalyzeRequest(BaseModel):
+    """Request to analyze reviews for a listing."""
+    listing_id: str
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "listing_id": "fdc645fe-c17a-48c6-9ad5-44a908238694"
+            }
+        }
+
+
+# ============ Response Models ============
+
+class APIResponse(BaseModel):
+    """Standard API response."""
     success: bool
-    agent_response: str
-    target_agent: str
     action_code: str
-    session_id: str
+    agent: str
+    data: Dict[str, Any]
+    show_action_button: bool = False
     error: Optional[str] = None
 
 
-class ActionCodeInfo(BaseModel):
-    """Information about an action code."""
-    code: str
-    agent: str
-    card_type: str
-    description: str
-    default_prompt: str
-
-
-# API Endpoints
+# ============ API Endpoints ============
 
 @app.get("/")
-async def root():
+def root():
     """Health check endpoint."""
-    return {"status": "ok", "service": "iShare Dashboard Agent API"}
+    return {"status": "ok", "service": "iShare Dashboard Agent API", "version": "2.0.0"}
 
 
-@app.get("/action-codes", response_model=Dict[str, ActionCodeInfo])
-async def get_action_codes():
+@app.get("/action-codes")
+def get_action_codes():
     """
-    Get all available action codes.
-    
-    Returns a dictionary of all action codes that can be used
-    to trigger specific agent actions from UI cards.
+    Get all available action codes and their configurations.
     """
     result = {}
     for code in ActionCode:
         config = ACTION_CODE_CONFIG.get(code, {})
-        result[code.value] = ActionCodeInfo(
-            code=code.value,
-            agent=config.get("agent", ""),
-            card_type=config.get("card_type", ""),
-            description=config.get("action_description", ""),
-            default_prompt=config.get("default_prompt", "")
-        )
+        result[code.value] = {
+            "code": code.value,
+            "agent": config.get("agent", ""),
+            "tool": config.get("tool", ""),
+            "description": config.get("description", ""),
+            "required_params": config.get("required_params", []),
+            "has_action_button": config.get("has_action_button", False),
+            "card_type": config.get("card_type", "")
+        }
     return result
 
 
-@app.post("/card-action", response_model=CardActionResponseModel)
-async def handle_card_action(request: CardActionRequestModel):
+# ============ PRICING ENDPOINTS ============
+
+@app.post("/pricing/analyze", response_model=APIResponse)
+def analyze_pricing(request: PricingAnalyzeRequest):
     """
-    Handle a card action from the UI.
+    Analyze pricing for a listing and get recommendations.
     
-    This endpoint is called when a user clicks "Take Action" on an insight card.
-    It routes the request to the appropriate sub-agent based on the action code.
+    This is triggered when user clicks the "Pricing Analysis" card.
     
-    **Action Codes:**
-    - `DEMAND_001`: High Demand Alert - triggers DemandPricingAgent
-    - `DEMAND_002`: Demand Prediction - triggers DemandPricingAgent
-    - `BOOKING_001`: Booking Duration Trend - triggers BookingTrendAgent
-    - `BOOKING_002`: Booking Discount - triggers BookingTrendAgent
-    - `REVIEW_001`: Review Highlight - triggers ReviewAnalysisAgent
-    - `REVIEW_002`: Review Flag Issue - triggers ReviewAnalysisAgent
+    Returns:
+    - current_price: Current listing price
+    - suggested_price: Recommended price
+    - adjustment_percent: Percentage change
+    - demand_level: High/Medium/Low
+    - reasons: Why this price is recommended
+    - can_take_action: Whether price change is recommended
+    
+    If can_take_action is True, show the "Take Action" button.
     """
     card_request = CardActionRequest(
-        action_code=request.action_code,
+        action_code=ActionCode.PRICING_ANALYZE.value,
+        listing_id=request.listing_id
+    )
+    
+    response = process_card_action(card_request)
+    return response_to_dict(response)
+
+
+@app.post("/pricing/apply", response_model=APIResponse)
+def apply_pricing(request: PricingApplyRequest):
+    """
+    Apply the suggested price change to the database.
+    
+    This is triggered when user clicks the "Take Action" button.
+    
+    Returns:
+    - success: Whether the price was updated
+    - old_price: Previous price
+    - new_price: New price
+    - message: Confirmation message
+    """
+    card_request = CardActionRequest(
+        action_code=ActionCode.PRICING_APPLY.value,
         listing_id=request.listing_id,
-        user_id=request.user_id,
-        additional_context=request.additional_context
+        new_price=request.new_price
     )
     
-    response = await process_card_action(card_request)
-    
-    return CardActionResponseModel(
-        success=response.success,
-        agent_response=response.agent_response,
-        target_agent=response.target_agent,
-        action_code=response.action_code,
-        session_id=response.session_id,
-        error=response.error
-    )
+    response = process_card_action(card_request)
+    return response_to_dict(response)
 
 
-@app.get("/preview-action/{action_code}")
-async def preview_action(action_code: str, listing_id: str):
+# ============ MARKET TREND ENDPOINTS ============
+
+@app.post("/market/analyze", response_model=APIResponse)
+def analyze_market(request: MarketAnalyzeRequest):
     """
-    Preview what an action will do without executing it.
+    Analyze market trends for an owner.
     
-    Useful for showing users what will happen when they click a button.
+    This is triggered when user clicks the "Market Trend Analysis" card.
+    
+    Returns:
+    - portfolio: Owner's current portfolio summary
+    - trending_types: Top trending listing types in market
+    - recommendations: Priority recommendations for the owner
     """
-    result = build_direct_agent_prompt(action_code, listing_id)
-    
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    
-    return result
-
-
-@app.post("/chat")
-async def chat_with_agent(
-    message: str,
-    user_id: str = "default_user",
-    listing_id: Optional[str] = None
-):
-    """
-    General chat endpoint for free-form conversation with the agent.
-    
-    This endpoint allows users to have a natural conversation with the agent
-    without using predefined action codes.
-    """
-    from google.adk.runners import Runner
-    from google.adk.sessions import InMemorySessionService
-    from google.genai import types
-    from ..agent import root_agent
-    
-    session_service = InMemorySessionService()
-    runner = Runner(
-        agent=root_agent,
-        app_name="iShare_Dashboard",
-        session_service=session_service,
+    card_request = CardActionRequest(
+        action_code=ActionCode.MARKET_ANALYZE.value,
+        owner_id=request.owner_id
     )
     
-    session_id = f"chat_{user_id}"
-    if listing_id:
-        session_id = f"chat_{user_id}_{listing_id}"
-    
-    session = await session_service.get_session(
-        app_name="iShare_Dashboard",
-        user_id=user_id,
-        session_id=session_id
-    )
-    
-    if session is None:
-        session = await session_service.create_session(
-            app_name="iShare_Dashboard",
-            user_id=user_id,
-            session_id=session_id
-        )
-    
-    content = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=message)]
-    )
-    
-    response_text = ""
-    async for event in runner.run_async(
-        user_id=user_id,
-        session_id=session_id,
-        new_message=content
-    ):
-        if hasattr(event, 'content') and event.content:
-            if hasattr(event.content, 'parts'):
-                for part in event.content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        response_text += part.text
-    
-    return {
-        "response": response_text,
-        "session_id": session_id
-    }
+    response = process_card_action(card_request)
+    return response_to_dict(response)
 
 
-# Run with: uvicorn my_agent2.api.endpoints:app --reload
+# ============ REVIEW ENDPOINTS ============
+
+@app.post("/review/analyze", response_model=APIResponse)
+def analyze_reviews(request: ReviewAnalyzeRequest):
+    """
+    Analyze reviews for a listing.
+    
+    This is triggered when user clicks the "Review Highlight" card.
+    
+    Returns:
+    - overall_satisfaction: Satisfaction level
+    - rating_distribution: Breakdown of ratings
+    - sentiment_analysis: Positive/negative sentiment
+    - recurring_themes: Common topics in reviews
+    - recommendations: Suggestions for improvement
+    """
+    card_request = CardActionRequest(
+        action_code=ActionCode.REVIEW_ANALYZE.value,
+        listing_id=request.listing_id
+    )
+    
+    response = process_card_action(card_request)
+    return response_to_dict(response)
+
+
+# Run with: uvicorn my_agent2.api.endpoints:app --reload --port 8001

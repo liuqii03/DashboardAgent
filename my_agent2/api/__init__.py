@@ -10,7 +10,7 @@ from .agent_service import (
     CardActionRequest,
     CardActionResponse,
     process_card_action,
-    build_direct_agent_prompt
+    response_to_dict
 )
 from .endpoints import app
 
@@ -21,6 +21,6 @@ __all__ = [
     "CardActionRequest",
     "CardActionResponse",
     "process_card_action",
-    "build_direct_agent_prompt",
+    "response_to_dict",
     "app"
 ]

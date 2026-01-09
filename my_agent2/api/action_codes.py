@@ -1,14 +1,18 @@
 """
 Action codes for UI integration.
 
-Each card in the UI has a specific action code that maps to a sub-agent.
-When a user clicks on a card, the frontend sends the action code
-to the backend, which routes it to the appropriate agent.
+Flow:
+1. Dashboard shows 3 insight cards (Pricing, Market Trend, Review)
+2. User clicks on a card → sends action code to backend
+3. Backend routes to appropriate agent and returns JSON response
+4. For Pricing Agent: If price change suggested, "Take Action" button appears
+5. User clicks "Take Action" → sends PRICING_APPLY action code
+6. Agent updates database with new price
 
 Agents:
-- ReviewAnalysisAgent: Analyzes reviews (read-only, no actions)
 - PricingAgent: Dynamic pricing with "Take Action" capability
-- DemandTrendAgent: Market trends and suggestions (read-only)
+- DemandTrendAgent: Market trends and recommendations (read-only)
+- ReviewAnalysisAgent: Review analysis and highlights (read-only)
 """
 
 from enum import Enum
@@ -20,74 +24,63 @@ class ActionCode(str, Enum):
     Predefined action codes for each insight card type.
     These codes are sent from the UI when user interacts with cards.
     """
-    # Pricing-related actions (HAS TAKE ACTION BUTTON)
-    PRICING_ANALYSIS = "PRICING_001"          # Analyze pricing and get recommendations
-    PRICING_APPLY = "PRICING_002"             # Apply suggested price change
+    # ============ PRICING CARD ============
+    # Triggered when user clicks the Pricing Analysis card
+    PRICING_ANALYZE = "PRICING_ANALYZE"
     
-    # Demand/Market trend actions (READ-ONLY)
-    DEMAND_TRENDS = "DEMAND_001"              # View market trends
-    DEMAND_SUGGESTIONS = "DEMAND_002"         # Get suggestions for new listings
+    # Triggered when user clicks "Take Action" button after seeing price recommendation
+    PRICING_APPLY = "PRICING_APPLY"
     
-    # Review-related actions (READ-ONLY)
-    REVIEW_ANALYSIS = "REVIEW_001"            # Review analysis and sentiment
-    REVIEW_SUMMARY = "REVIEW_002"             # Get review summary
+    # ============ MARKET TREND CARD ============
+    # Triggered when user clicks the Market Trend Analysis card
+    MARKET_ANALYZE = "MARKET_ANALYZE"
+    
+    # ============ REVIEW CARD ============
+    # Triggered when user clicks the Review Highlight card
+    REVIEW_ANALYZE = "REVIEW_ANALYZE"
 
 
-# Map action codes to their target agent and default context
+# Configuration for each action code
 ACTION_CODE_CONFIG: Dict[str, Dict[str, Any]] = {
-    # PRICING AGENT - Has "Take Action" capability
-    ActionCode.PRICING_ANALYSIS: {
+    
+    # ========== PRICING AGENT ==========
+    ActionCode.PRICING_ANALYZE: {
         "agent": "PricingAgent",
-        "default_prompt": "Analyze the pricing for my listing and suggest adjustments based on demand.",
-        "context_template": "Pricing analysis for {listing_title} ({listing_id}). Current price: ${current_price}.",
-        "card_type": "pricing",
-        "action_description": "Analyze demand and get pricing recommendations",
-        "has_action_button": True
+        "tool": "analyze_pricing",
+        "description": "Analyze demand and get pricing recommendations",
+        "required_params": ["listing_id"],
+        "has_action_button": True,  # Shows "Take Action" if price change recommended
+        "card_type": "pricing"
     },
+    
     ActionCode.PRICING_APPLY: {
         "agent": "PricingAgent",
-        "default_prompt": "Apply the suggested price change to my listing.",
-        "context_template": "Applying price change for {listing_id}. New price: ${suggested_price}.",
+        "tool": "apply_price_change",
+        "description": "Apply the suggested price change to database",
+        "required_params": ["listing_id", "new_price"],
+        "has_action_button": False,
         "card_type": "pricing",
-        "action_description": "Apply the suggested price",
-        "has_action_button": True,
-        "is_action_call": True
+        "is_write_action": True  # This action modifies database
     },
     
-    # DEMAND TREND AGENT - Read-only
-    ActionCode.DEMAND_TRENDS: {
+    # ========== DEMAND TREND AGENT ==========
+    ActionCode.MARKET_ANALYZE: {
         "agent": "DemandTrendAgent",
-        "default_prompt": "What listing types are currently trending in the market?",
-        "context_template": "Analyzing market trends for owner {owner_id}.",
-        "card_type": "demand",
-        "action_description": "View trending listing types",
-        "has_action_button": False
-    },
-    ActionCode.DEMAND_SUGGESTIONS: {
-        "agent": "DemandTrendAgent",
-        "default_prompt": "What can I rent to increase my revenue based on current market trends?",
-        "context_template": "Generating suggestions for owner {owner_id} to increase revenue.",
-        "card_type": "demand",
-        "action_description": "Get suggestions for new listings",
-        "has_action_button": False
+        "tool": "analyze_market_trends",
+        "description": "Analyze market trends and get recommendations",
+        "required_params": ["owner_id"],
+        "has_action_button": False,  # Read-only
+        "card_type": "demand"
     },
     
-    # REVIEW AGENT - Read-only
-    ActionCode.REVIEW_ANALYSIS: {
+    # ========== REVIEW AGENT ==========
+    ActionCode.REVIEW_ANALYZE: {
         "agent": "ReviewAnalysisAgent",
-        "default_prompt": "Analyze the reviews for my listing and provide a summary.",
-        "context_template": "Review analysis for {listing_title} ({listing_id}).",
-        "card_type": "review",
-        "action_description": "Analyze reviews and sentiment",
-        "has_action_button": False
-    },
-    ActionCode.REVIEW_SUMMARY: {
-        "agent": "ReviewAnalysisAgent",
-        "default_prompt": "Give me a summary of customer feedback and recurring themes.",
-        "context_template": "Summarizing reviews for {listing_id}.",
-        "card_type": "review",
-        "action_description": "Get review summary with themes",
-        "has_action_button": False
+        "tool": "analyze_reviews",
+        "description": "Analyze reviews and get highlights",
+        "required_params": ["listing_id"],
+        "has_action_button": False,  # Read-only
+        "card_type": "review"
     },
 }
 
@@ -96,11 +89,11 @@ def get_action_config(action_code: str) -> Dict[str, Any]:
     """
     Get the configuration for a specific action code.
     
-    :param action_code: The action code string (e.g., "DEMAND_001")
-    :return: Configuration dictionary with agent, prompt, and context info
+    :param action_code: The action code string (e.g., "PRICING_ANALYZE")
+    :return: Configuration dictionary
     """
     # Handle both enum values and string values
-    if isinstance(action_code, ActionCode):
+    if isinstance(action_code, ActionCode): 
         return ACTION_CODE_CONFIG.get(action_code, {})
     
     # Try to match string to enum
@@ -119,4 +112,37 @@ def get_target_agent(action_code: str) -> str:
     :return: Agent name string
     """
     config = get_action_config(action_code)
-    return config.get("agent", "RootAgent")
+    return config.get("agent", "")
+
+
+def get_required_params(action_code: str) -> list:
+    """
+    Get required parameters for an action code.
+    
+    :param action_code: The action code string
+    :return: List of required parameter names
+    """
+    config = get_action_config(action_code)
+    return config.get("required_params", [])
+
+
+def has_action_button(action_code: str) -> bool:
+    """
+    Check if this action code can trigger a "Take Action" button.
+    
+    :param action_code: The action code string
+    :return: True if action button should be shown
+    """
+    config = get_action_config(action_code)
+    return config.get("has_action_button", False)
+
+
+def is_write_action(action_code: str) -> bool:
+    """
+    Check if this action modifies the database.
+    
+    :param action_code: The action code string
+    :return: True if this action writes to database
+    """
+    config = get_action_config(action_code)
+    return config.get("is_write_action", False)
