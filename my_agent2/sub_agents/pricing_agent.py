@@ -53,31 +53,16 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
     total_days_booked = 0
     total_revenue = 0.0
     
-    # Malaysian Public Holidays 2025-2026 (with buffer days for travel)
+    # Malaysian Public Holidays 2026 (with buffer days for travel)
     # Format: (start_date, end_date, holiday_name)
     malaysian_holidays = [
-        # 2025 Holidays
-        (datetime(2025, 1, 1), datetime(2025, 1, 2), "New Year"),
-        (datetime(2025, 1, 29), datetime(2025, 2, 1), "Chinese New Year"),
-        (datetime(2025, 2, 1), datetime(2025, 2, 3), "Federal Territory Day"),
-        (datetime(2025, 3, 30), datetime(2025, 4, 1), "Hari Raya Aidilfitri"),
-        (datetime(2025, 5, 1), datetime(2025, 5, 2), "Labour Day"),
-        (datetime(2025, 5, 12), datetime(2025, 5, 13), "Wesak Day"),
-        (datetime(2025, 6, 2), datetime(2025, 6, 3), "Agong Birthday"),
-        (datetime(2025, 6, 6), datetime(2025, 6, 8), "Hari Raya Haji"),
-        (datetime(2025, 6, 27), datetime(2025, 6, 28), "Awal Muharram"),
-        (datetime(2025, 8, 31), datetime(2025, 9, 1), "Merdeka Day"),
-        (datetime(2025, 9, 5), datetime(2025, 9, 6), "Maulidur Rasul"),
-        (datetime(2025, 9, 16), datetime(2025, 9, 17), "Malaysia Day"),
-        (datetime(2025, 10, 20), datetime(2025, 10, 21), "Deepavali"),
-        (datetime(2025, 12, 25), datetime(2025, 12, 26), "Christmas"),
-        # 2026 Holidays
         (datetime(2026, 1, 1), datetime(2026, 1, 2), "New Year"),
+        (datetime(2026, 1, 14), datetime(2026, 1, 15), "Thaipusam"),
         (datetime(2026, 2, 1), datetime(2026, 2, 2), "Federal Territory Day"),
         (datetime(2026, 2, 17), datetime(2026, 2, 20), "Chinese New Year"),
         (datetime(2026, 3, 20), datetime(2026, 3, 23), "Hari Raya Aidilfitri"),
         (datetime(2026, 5, 1), datetime(2026, 5, 2), "Labour Day"),
-        (datetime(2026, 5, 1), datetime(2026, 5, 2), "Wesak Day"),
+        (datetime(2026, 5, 12), datetime(2026, 5, 13), "Wesak Day"),
         (datetime(2026, 5, 27), datetime(2026, 5, 30), "Hari Raya Haji"),
         (datetime(2026, 6, 1), datetime(2026, 6, 2), "Agong Birthday"),
         (datetime(2026, 6, 17), datetime(2026, 6, 18), "Awal Muharram"),
@@ -88,14 +73,12 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
         (datetime(2026, 12, 25), datetime(2026, 12, 26), "Christmas"),
     ]
     
-    # School holidays in Malaysia (approximate)
+    # School holidays in Malaysia 2026 (approximate)
     school_holidays = [
-        (datetime(2025, 3, 14), datetime(2025, 3, 23), "March School Holiday"),
-        (datetime(2025, 5, 24), datetime(2025, 6, 8), "Mid-Year School Holiday"),
-        (datetime(2025, 8, 16), datetime(2025, 8, 24), "August School Holiday"),
-        (datetime(2025, 11, 22), datetime(2026, 1, 5), "Year-End School Holiday"),
         (datetime(2026, 3, 13), datetime(2026, 3, 22), "March School Holiday"),
         (datetime(2026, 5, 23), datetime(2026, 6, 7), "Mid-Year School Holiday"),
+        (datetime(2026, 8, 15), datetime(2026, 8, 23), "August School Holiday"),
+        (datetime(2026, 11, 21), datetime(2026, 12, 31), "Year-End School Holiday"),
     ]
     
     holiday_bookings = 0
