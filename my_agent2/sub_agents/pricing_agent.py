@@ -12,8 +12,12 @@ This agent handles dynamic pricing recommendations:
 
 from typing import Dict, Any
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from ..database.api_db import api_db as db
+
+# Malaysia timezone
+MALAYSIA_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
 def analyze_pricing(listing_id: str) -> Dict[str, Any]:
@@ -49,16 +53,59 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
     total_days_booked = 0
     total_revenue = 0.0
     
-    # Define holiday periods (simplified)
-    holiday_periods = [
-        (datetime(2025, 12, 20), datetime(2026, 1, 5)),   # Christmas/New Year
-        (datetime(2026, 1, 25), datetime(2026, 2, 5)),    # Chinese New Year
-        (datetime(2026, 3, 28), datetime(2026, 4, 5)),    # Easter
+    # Malaysian Public Holidays 2025-2026 (with buffer days for travel)
+    # Format: (start_date, end_date, holiday_name)
+    malaysian_holidays = [
+        # 2025 Holidays
+        (datetime(2025, 1, 1), datetime(2025, 1, 2), "New Year"),
+        (datetime(2025, 1, 29), datetime(2025, 2, 1), "Chinese New Year"),
+        (datetime(2025, 2, 1), datetime(2025, 2, 3), "Federal Territory Day"),
+        (datetime(2025, 3, 30), datetime(2025, 4, 1), "Hari Raya Aidilfitri"),
+        (datetime(2025, 5, 1), datetime(2025, 5, 2), "Labour Day"),
+        (datetime(2025, 5, 12), datetime(2025, 5, 13), "Wesak Day"),
+        (datetime(2025, 6, 2), datetime(2025, 6, 3), "Agong Birthday"),
+        (datetime(2025, 6, 6), datetime(2025, 6, 8), "Hari Raya Haji"),
+        (datetime(2025, 6, 27), datetime(2025, 6, 28), "Awal Muharram"),
+        (datetime(2025, 8, 31), datetime(2025, 9, 1), "Merdeka Day"),
+        (datetime(2025, 9, 5), datetime(2025, 9, 6), "Maulidur Rasul"),
+        (datetime(2025, 9, 16), datetime(2025, 9, 17), "Malaysia Day"),
+        (datetime(2025, 10, 20), datetime(2025, 10, 21), "Deepavali"),
+        (datetime(2025, 12, 25), datetime(2025, 12, 26), "Christmas"),
+        # 2026 Holidays
+        (datetime(2026, 1, 1), datetime(2026, 1, 2), "New Year"),
+        (datetime(2026, 2, 1), datetime(2026, 2, 2), "Federal Territory Day"),
+        (datetime(2026, 2, 17), datetime(2026, 2, 20), "Chinese New Year"),
+        (datetime(2026, 3, 20), datetime(2026, 3, 23), "Hari Raya Aidilfitri"),
+        (datetime(2026, 5, 1), datetime(2026, 5, 2), "Labour Day"),
+        (datetime(2026, 5, 1), datetime(2026, 5, 2), "Wesak Day"),
+        (datetime(2026, 5, 27), datetime(2026, 5, 30), "Hari Raya Haji"),
+        (datetime(2026, 6, 1), datetime(2026, 6, 2), "Agong Birthday"),
+        (datetime(2026, 6, 17), datetime(2026, 6, 18), "Awal Muharram"),
+        (datetime(2026, 8, 26), datetime(2026, 8, 27), "Maulidur Rasul"),
+        (datetime(2026, 8, 31), datetime(2026, 9, 1), "Merdeka Day"),
+        (datetime(2026, 9, 16), datetime(2026, 9, 17), "Malaysia Day"),
+        (datetime(2026, 11, 8), datetime(2026, 11, 9), "Deepavali"),
+        (datetime(2026, 12, 25), datetime(2026, 12, 26), "Christmas"),
+    ]
+    
+    # School holidays in Malaysia (approximate)
+    school_holidays = [
+        (datetime(2025, 3, 14), datetime(2025, 3, 23), "March School Holiday"),
+        (datetime(2025, 5, 24), datetime(2025, 6, 8), "Mid-Year School Holiday"),
+        (datetime(2025, 8, 16), datetime(2025, 8, 24), "August School Holiday"),
+        (datetime(2025, 11, 22), datetime(2026, 1, 5), "Year-End School Holiday"),
+        (datetime(2026, 3, 13), datetime(2026, 3, 22), "March School Holiday"),
+        (datetime(2026, 5, 23), datetime(2026, 6, 7), "Mid-Year School Holiday"),
     ]
     
     holiday_bookings = 0
+    school_holiday_bookings = 0
+    matched_holidays = []
     recent_bookings = 0  # Last 30 days
-    now = datetime.now()
+    recent_days_booked = 0  # Days booked in last 30 days (for occupancy)
+    
+    # Get current time in Malaysia timezone
+    now = datetime.now(MALAYSIA_TZ).replace(tzinfo=None)
     thirty_days_ago = now - timedelta(days=30)
     
     for booking in bookings:
@@ -75,18 +122,35 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
         else:
             weekday_bookings += 1
         
-        # Check if holiday booking
-        for holiday_start, holiday_end in holiday_periods:
-            if holiday_start <= booking.startDate.replace(tzinfo=None) <= holiday_end:
+        # Check if Malaysian public holiday booking
+        booking_start = booking.startDate.replace(tzinfo=None)
+        booking_end = booking.endDate.replace(tzinfo=None)
+        
+        for holiday_start, holiday_end, holiday_name in malaysian_holidays:
+            if holiday_start <= booking_start <= holiday_end:
                 holiday_bookings += 1
+                if holiday_name not in matched_holidays:
+                    matched_holidays.append(holiday_name)
                 break
         
-        # Check if recent booking
-        if booking.startDate.replace(tzinfo=None) >= thirty_days_ago.replace(tzinfo=None):
+        # Check if school holiday booking
+        for school_start, school_end, school_name in school_holidays:
+            if school_start <= booking_start <= school_end:
+                school_holiday_bookings += 1
+                break
+        
+        # Check if recent booking (within last 30 days)
+        if booking_start >= thirty_days_ago:
             recent_bookings += 1
+            # Calculate days booked within the 30-day window
+            overlap_start = max(booking_start, thirty_days_ago)
+            overlap_end = min(booking_end, now)
+            if overlap_end > overlap_start:
+                recent_days_booked += (overlap_end - overlap_start).days
     
-    # Calculate occupancy rate (last 30 days)
-    occupancy_rate = min(total_days_booked / 30.0, 1.0) if total_bookings > 0 else 0.0
+    # Calculate occupancy rate (last 30 days only)
+    # Days booked in last 30 days / 30 days
+    occupancy_rate = min(recent_days_booked / 30.0, 1.0) if recent_days_booked > 0 else 0.0
     
     # Calculate conversion rate (bookings per view - simplified as bookings/10)
     conversion_rate = min(total_bookings / 10.0, 1.0) if total_bookings > 0 else 0.0
@@ -108,7 +172,11 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
     
     if holiday_bookings > 0:
         demand_score += 2
-        demand_indicators.append(f"{holiday_bookings} holiday period bookings")
+        demand_indicators.append(f"{holiday_bookings} public holiday bookings ({', '.join(matched_holidays[:2])})")
+    
+    if school_holiday_bookings > 0:
+        demand_score += 1
+        demand_indicators.append(f"{school_holiday_bookings} school holiday bookings")
     
     if recent_bookings >= 3:
         demand_score += 2
@@ -153,33 +221,17 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
         reasons.append("Current pricing appears optimal for demand level")
         reasons.append(f"Occupancy rate: {occupancy_rate*100:.0f}%")
     
-    # Build notes
-    notes = []
-    if weekend_bookings > 0:
-        notes.append(f"Weekend bookings: {weekend_bookings} ({weekend_bookings/max(total_bookings,1)*100:.0f}% of total)")
-    if holiday_bookings > 0:
-        notes.append(f"Holiday bookings detected: {holiday_bookings}")
-    if recent_bookings > 0:
-        notes.append(f"Recent bookings (30 days): {recent_bookings}")
-    notes.append(f"Total revenue from bookings: ${total_revenue:.2f}")
-    
+    # Return clean JSON structure
     return {
-        "listing_id": listing_id,
-        "listing_title": listing_title,
+        "title": f"Pricing Analysis for '{listing_title}'",
         "current_price": current_price,
         "suggested_price": round(suggested_price, 2),
         "price_difference": round(price_difference, 2),
         "adjustment_percent": adjustment_percent,
         "adjustment_direction": adjustment_direction,
         "demand_level": demand_level,
-        "occupancy_rate": round(occupancy_rate * 100, 1),
-        "total_bookings": total_bookings,
-        "weekend_bookings": weekend_bookings,
-        "holiday_bookings": holiday_bookings,
         "reasons": reasons,
-        "notes": notes,
-        "can_take_action": adjustment_percent != 0,
-        "message": f"Pricing analysis complete for '{listing_title}'."
+        "can_take_action": adjustment_percent != 0
     }
 
 
@@ -231,25 +283,19 @@ def apply_price_change(listing_id: str, new_price: float) -> Dict[str, Any]:
 pricing_agent = LlmAgent(
     model="gemini-2.5-flash",
     name="PricingAgent",
-    description="Analyzes demand patterns and provides dynamic pricing recommendations with the ability to apply price changes.",
+    description="Analyzes demand patterns and provides dynamic pricing recommendations in JSON format.",
     instruction=(
-        "You are a dynamic pricing specialist for peer-to-peer rentals. Your role is to analyze demand and recommend optimal pricing.\n\n"
-        "Your analysis includes:\n"
-        "- Identifying high-demand periods (weekends, holidays) by counting bookings\n"
-        "- Calculating demand levels based on occupancy and booking patterns\n"
-        "- Suggesting price adjustments (±10%) based on demand\n\n"
+        "You are a dynamic pricing specialist for peer-to-peer rentals.\n\n"
         "When responding to a query:\n"
-        "1. If the listing ID is not clear, politely ask the user to provide it.\n"
+        "1. If the listing ID is not provided, ask the user for it.\n"
         "2. Use the `analyze_pricing` tool to get pricing analysis.\n"
-        "3. Present clearly:\n"
-        "   - Current Price\n"
-        "   - Suggested Price\n"
-        "   - Reasons for the recommendation\n"
-        "   - Additional notes about booking patterns\n\n"
+        "3. Return ONLY the JSON object from the tool result - do not wrap it in another object.\n"
+        "4. Do not add any text before or after the JSON.\n"
+        "5. Do not use markdown code blocks.\n\n"
         "ACTION CAPABILITY:\n"
-        "When the user wants to apply the price change (clicks 'Take Action'), use the `apply_price_change` tool "
+        "When the user wants to apply the price change, use the `apply_price_change` tool "
         "with the listing_id and the suggested new_price to update the database.\n\n"
-        "Always explain the reasoning behind your price recommendations clearly."
+        "Return the tool result as-is in JSON format."
     ),
     tools=[analyze_pricing, apply_price_change],
 )

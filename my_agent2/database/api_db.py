@@ -169,18 +169,16 @@ class APIDatabase:
         :param listing_id: UUID of the listing
         :return: List of Booking objects
         """
-        # Try to get bookings from the API
-        data = self._get(f"/bookings?listingId={listing_id}")
+        # Get ALL bookings and filter client-side
+        # (API's ?listingId= filter doesn't work properly)
+        data = self._get(f"/bookings")
         
-        if not data:
-            # Try alternative endpoint - get all and filter
-            data = self._get(f"/bookings")
-            if data:
-                # Filter by listing_id (check both camelCase and snake_case)
-                data = [b for b in data if 
-                        b.get("listingId") == listing_id or 
-                        b.get("listing_id") == listing_id or
-                        (b.get("listing") and b.get("listing", {}).get("id") == listing_id)]
+        if data:
+            # Filter by listing_id - check nested listing object or direct field
+            data = [b for b in data if 
+                    b.get("listingId") == listing_id or 
+                    b.get("listing_id") == listing_id or
+                    (b.get("listing") and b.get("listing", {}).get("id") == listing_id)]
         
         if not data:
             return []
@@ -209,6 +207,67 @@ class APIDatabase:
                     booking_listing_id = item.get("listing", {}).get("id", "")
                 
                 # Get lenderId (the renter/borrower)
+                lender_id = item.get("lenderId") or item.get("lender_id")
+                if not lender_id and item.get("lender"):
+                    lender_id = item.get("lender", {}).get("id", 0)
+                
+                bookings.append(Booking(
+                    id=int(item.get("id", 0)),
+                    listingId=booking_listing_id or "",
+                    lenderId=int(lender_id) if lender_id else 0,
+                    startDate=start_date,
+                    endDate=end_date,
+                    totalPrice=float(item.get("totalPrice") or item.get("total_price", 0)),
+                    status=item.get("status", "CONFIRMED"),
+                    paymentTxHash=item.get("paymentTxHash") or item.get("payment_tx_hash", ""),
+                    appliedPoliciesJson=str(item.get("appliedPoliciesJson") or item.get("applied_policies_json", "{}")),
+                    appliedInsuranceJson=str(item.get("appliedInsuranceJson") or item.get("applied_insurance_json", "{}")),
+                    blockchainId=item.get("blockchainId") or item.get("blockchain_id"),
+                    createdAt=created_at,
+                    updatedAt=updated_at
+                ))
+            except Exception as e:
+                print(f"Error parsing booking: {e}")
+                continue
+        
+        return bookings
+
+    def get_all_bookings(self) -> List[Booking]:
+        """
+        Retrieve ALL bookings from the database.
+        Useful for market analysis across all listings.
+        
+        :return: List of all Booking objects
+        """
+        data = self._get(f"/bookings")
+        
+        if not data:
+            return []
+        
+        bookings = []
+        for item in data:
+            try:
+                # Parse dates
+                start_date = item.get("startDate") or item.get("start_date")
+                end_date = item.get("endDate") or item.get("end_date")
+                created_at = item.get("createdAt") or item.get("created_at")
+                updated_at = item.get("updatedAt") or item.get("updated_at")
+                
+                if isinstance(start_date, str):
+                    start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+                if isinstance(end_date, str):
+                    end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                if isinstance(updated_at, str):
+                    updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                
+                # Get listingId from nested object
+                booking_listing_id = item.get("listingId") or item.get("listing_id")
+                if not booking_listing_id and item.get("listing"):
+                    booking_listing_id = item.get("listing", {}).get("id", "")
+                
+                # Get lenderId
                 lender_id = item.get("lenderId") or item.get("lender_id")
                 if not lender_id and item.get("lender"):
                     lender_id = item.get("lender", {}).get("id", 0)
@@ -385,35 +444,6 @@ class APIDatabase:
             "message": f"Applied {discount_percent}% discount to '{listing.title}' for longer bookings.",
             "listing_id": listing_id,
             "discount_percent": discount_percent
-        }
-
-    def flag_reviews(self, listing_id: str, issue: str) -> Dict[str, Any]:
-        """
-        Flag reviews that mention a specific issue.
-        
-        :param listing_id: UUID of the listing
-        :param issue: Keyword to search for in comments
-        :return: Status dictionary with count of flagged reviews
-        """
-        reviews = self.get_reviews(listing_id)
-        
-        if not reviews:
-            return {"status": "error", "message": f"No reviews found for listing {listing_id}"}
-        
-        count = 0
-        for review in reviews:
-            if issue.lower() in review.comment.lower():
-                review.flagged = True
-                count += 1
-                # In production, would update via API:
-                # self._patch(f"/reviews/{review.reviewId}", {"flagged": True})
-        
-        return {
-            "status": "success",
-            "message": f"Flagged {count} review(s) mentioning '{issue}' for listing {listing_id}.",
-            "flagged_count": count,
-            "listing_id": listing_id,
-            "issue": issue
         }
 
     def close(self):

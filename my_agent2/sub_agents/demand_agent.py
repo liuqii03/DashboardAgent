@@ -26,10 +26,10 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
     2. Calculate booking frequency and revenue by listing type
     3. Identify which types are trending (high demand)
     4. Compare with owner's current listings
-    5. Suggest what types of listings owner could add
+    5. Provide priority recommendations
 
     :param owner_id: ID of the owner to analyze
-    :return: Dictionary with market trends and suggestions
+    :return: Dictionary with market trends and recommendations
     """
     # Get all listings in the market
     all_listings = db.get_all_listings()
@@ -39,17 +39,26 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
     
     if not all_listings:
         return {
-            "owner_id": owner_id,
-            "message": "No market data available for analysis.",
-            "suggestions": []
+            "title": "Market Trend Analysis",
+            "portfolio": {},
+            "trending_types": [],
+            "recommendations": [],
+            "message": "No market data available for analysis."
         }
+    
+    # Get ALL bookings once (more efficient than calling per listing)
+    all_bookings = db.get_all_bookings()
+    
+    # Group bookings by listing ID for quick lookup
+    bookings_by_listing: Dict[str, List] = defaultdict(list)
+    for booking in all_bookings:
+        bookings_by_listing[booking.listingId].append(booking)
     
     # Analyze market by listing type
     type_stats = defaultdict(lambda: {
         "count": 0,
         "total_bookings": 0,
         "total_revenue": 0.0,
-        "avg_price": 0.0,
         "listings": []
     })
     
@@ -58,36 +67,26 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
         type_stats[listing_type]["count"] += 1
         type_stats[listing_type]["listings"].append(listing)
         
-        # Get bookings for this listing
-        bookings = db.get_bookings(listing.listingId)
-        type_stats[listing_type]["total_bookings"] += len(bookings)
+        # Get bookings for this listing from our pre-fetched data
+        listing_bookings = bookings_by_listing.get(listing.listingId, [])
+        type_stats[listing_type]["total_bookings"] += len(listing_bookings)
         
-        for booking in bookings:
-            if booking.status == "CONFIRMED":
+        for booking in listing_bookings:
+            if booking.status in ["CONFIRMED", "COMPLETED"]:
                 type_stats[listing_type]["total_revenue"] += float(booking.totalPrice)
     
-    # Calculate averages and trends
+    # Calculate trends
     trending_types = []
     for listing_type, stats in type_stats.items():
         if stats["count"] > 0:
-            stats["avg_bookings"] = stats["total_bookings"] / stats["count"]
-            stats["avg_revenue"] = stats["total_revenue"] / stats["count"]
-            
-            # Calculate average price
-            prices = [l.basePrice for l in stats["listings"] if l.basePrice > 0]
-            stats["avg_price"] = sum(prices) / len(prices) if prices else 0
-            
             # Calculate trend score (higher = more trending)
-            trend_score = (stats["avg_bookings"] * 2) + (stats["avg_revenue"] / 100)
+            avg_bookings = stats["total_bookings"] / stats["count"]
+            avg_revenue = stats["total_revenue"] / stats["count"]
+            trend_score = (avg_bookings * 2) + (avg_revenue / 100)
             
             trending_types.append({
                 "type": listing_type,
                 "listing_count": stats["count"],
-                "total_bookings": stats["total_bookings"],
-                "avg_bookings": round(stats["avg_bookings"], 1),
-                "total_revenue": round(stats["total_revenue"], 2),
-                "avg_revenue": round(stats["avg_revenue"], 2),
-                "avg_price": round(stats["avg_price"], 2),
                 "trend_score": round(trend_score, 2)
             })
     
@@ -99,83 +98,89 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
     owner_revenue = 0.0
     owner_bookings = 0
     
+    # Track owner's bookings per listing for recommendation logic
+    owner_listings_with_bookings = {}
+    
     for listing in owner_listings:
         owner_types.add(listing.type or "Other")
-        bookings = db.get_bookings(listing.listingId)
-        owner_bookings += len(bookings)
-        for booking in bookings:
-            if booking.status == "CONFIRMED":
+        listing_bookings = bookings_by_listing.get(listing.listingId, [])
+        booking_count = len([b for b in listing_bookings if b.status in ["CONFIRMED", "COMPLETED"]])
+        owner_listings_with_bookings[listing.listingId] = {
+            "type": listing.type,
+            "title": listing.title,
+            "bookings": booking_count
+        }
+        owner_bookings += booking_count
+        for booking in listing_bookings:
+            if booking.status in ["CONFIRMED", "COMPLETED"]:
                 owner_revenue += float(booking.totalPrice)
     
-    # Generate suggestions
-    suggestions = []
+    # Generate priority recommendations
+    recommendations = []
     
-    # Find trending types owner doesn't have
-    for trend in trending_types[:5]:  # Top 5 trending
-        if trend["type"] not in owner_types and trend["avg_bookings"] >= 1:
-            suggestions.append({
-                "type": trend["type"],
-                "reason": f"High demand with {trend['avg_bookings']:.1f} avg bookings per listing",
-                "potential_revenue": f"${trend['avg_revenue']:.2f} avg revenue per listing",
-                "market_price": f"${trend['avg_price']:.2f} average price",
-                "priority": "High" if trend["trend_score"] > 5 else "Medium"
-            })
-    
-    # If owner has trending types, suggest expanding
-    for trend in trending_types[:3]:
+    for trend in trending_types[:5]:  # Check top 5 trending types
         if trend["type"] in owner_types:
+            # Owner HAS this trending type
             owner_count = sum(1 for l in owner_listings if l.type == trend["type"])
-            if owner_count < 3:  # Room to expand
-                suggestions.append({
+            
+            # Check if owner has bookings for this type
+            owner_type_bookings = sum(
+                info["bookings"] for lid, info in owner_listings_with_bookings.items() 
+                if info["type"] == trend["type"]
+            )
+            
+            if trend["trend_score"] > 5 and owner_type_bookings > 0:
+                # High performer with bookings - encourage!
+                recommendations.append({
                     "type": trend["type"],
-                    "reason": f"You already have {owner_count} {trend['type']} listing(s). This type is trending!",
-                    "potential_revenue": f"Consider adding more to capitalize on demand",
-                    "market_price": f"${trend['avg_price']:.2f} average price",
-                    "priority": "Medium"
+                    "status": "on_track",
+                    "message": f"Excellent! Your {owner_count} {trend['type']} listing(s) are performing well in a high-demand category.",
+                    "advice": "Keep maintaining quality and competitive pricing to maximize bookings."
+                })
+            elif trend["trend_score"] > 0 and owner_type_bookings == 0:
+                # In trending category but NO bookings - suggest improvements
+                recommendations.append({
+                    "type": trend["type"],
+                    "status": "needs_improvement",
+                    "message": f"Your {owner_count} {trend['type']} listing(s) are in a trending category but have no completed bookings yet.",
+                    "advice": "Try these improvements: 1) Add high-quality photos, 2) Write detailed descriptions, 3) Set competitive pricing, 4) Respond quickly to inquiries, 5) Offer flexible booking options."
+                })
+            elif owner_type_bookings > 0:
+                # Has some bookings
+                recommendations.append({
+                    "type": trend["type"],
+                    "status": "on_track",
+                    "message": f"Good job! Your {owner_count} {trend['type']} listing(s) are getting bookings.",
+                    "advice": "Continue optimizing your listings to capture more bookings."
+                })
+            else:
+                # Low market activity overall
+                recommendations.append({
+                    "type": trend["type"],
+                    "status": "low_demand",
+                    "message": f"You have {owner_count} {trend['type']} listing(s). Market activity for this type is currently low.",
+                    "advice": "Monitor market trends and consider diversifying your portfolio."
+                })
+        else:
+            # Owner DOESN'T have this trending type - suggest adding if high demand
+            if trend["trend_score"] > 3:
+                recommendations.append({
+                    "type": trend["type"],
+                    "status": "opportunity",
+                    "message": f"Consider adding {trend['type']} listings to your portfolio.",
+                    "advice": f"This category is trending with {trend['listing_count']} listings in the market and a trend score of {trend['trend_score']}."
                 })
     
-    # Build summary
-    top_trending = trending_types[:3] if trending_types else []
-    
-    summary_parts = [
-        f"📈 **Market Trend Analysis**\n\n",
-        f"**Your Portfolio:**\n",
-        f"  • Total Listings: {len(owner_listings)}\n",
-        f"  • Types: {', '.join(owner_types) if owner_types else 'None'}\n",
-        f"  • Total Bookings: {owner_bookings}\n",
-        f"  • Total Revenue: ${owner_revenue:.2f}\n\n",
-        f"**Top Trending Listing Types:**\n"
-    ]
-    
-    for i, trend in enumerate(top_trending, 1):
-        emoji = "🔥" if trend["trend_score"] > 5 else "📊"
-        summary_parts.append(
-            f"  {i}. {emoji} **{trend['type']}** - {trend['total_bookings']} bookings, "
-            f"${trend['total_revenue']:.2f} total revenue\n"
-        )
-    
-    if suggestions:
-        summary_parts.append(f"\n**Suggestions to Increase Revenue:**\n")
-        for i, sug in enumerate(suggestions[:3], 1):
-            priority_emoji = "🚀" if sug["priority"] == "High" else "💡"
-            summary_parts.append(
-                f"  {i}. {priority_emoji} **{sug['type']}**: {sug['reason']}\n"
-                f"     Potential: {sug['potential_revenue']}\n"
-            )
-    else:
-        summary_parts.append(f"\n✅ Your portfolio covers the trending types well!\n")
-    
-    summary = "".join(summary_parts)
-    
     return {
-        "owner_id": owner_id,
-        "owner_listings_count": len(owner_listings),
-        "owner_types": list(owner_types),
-        "owner_total_bookings": owner_bookings,
-        "owner_total_revenue": round(owner_revenue, 2),
+        "title": "Market Trend Analysis",
+        "portfolio": {
+            "total_listings": len(owner_listings),
+            "types": list(owner_types),
+            "total_bookings": owner_bookings,
+            "total_revenue": round(owner_revenue, 2)
+        },
         "trending_types": trending_types[:5],
-        "suggestions": suggestions[:5],
-        "summary": summary,
+        "recommendations": recommendations,
         "message": "Market trend analysis complete."
     }
 
@@ -184,25 +189,24 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
 demand_agent = LlmAgent(
     model="gemini-2.5-flash",
     name="DemandTrendAgent",
-    description="Analyzes market trends to identify trending listing types and suggests what owners can rent to increase revenue.",
+    description="Analyzes market trends to identify trending listing types and provides priority recommendations.",
     instruction=(
         "You are a market trend analyst for peer-to-peer rentals. Your role is to help owners understand market demand and make strategic decisions.\n\n"
-        "Your analysis includes:\n"
-        "- Identifying which listing types are currently trending in the market\n"
-        "- Analyzing booking patterns across different listing categories\n"
-        "- Comparing the owner's portfolio with market trends\n"
-        "- Suggesting what types of listings the owner could add to increase revenue\n\n"
         "When responding to a query:\n"
         "1. If the owner ID is not clear, politely ask the user to provide it.\n"
         "2. Use the `analyze_market_trends` tool to get market analysis.\n"
-        "3. Present clearly:\n"
-        "   - Current portfolio summary\n"
-        "   - Top trending listing types in the market\n"
-        "   - Specific suggestions for new listings\n"
-        "   - Priority recommendations\n\n"
-        "IMPORTANT: This is a read-only advisory agent. You provide insights and suggestions, "
+        "3. Return the results in JSON format.\n\n"
+        "IMPORTANT: This is a read-only advisory agent. You provide insights and recommendations, "
         "but you cannot make changes to listings or the database.\n\n"
-        "Be encouraging and provide actionable insights that help owners grow their rental business."
+        "OUTPUT FORMAT: You MUST respond with ONLY valid JSON, no markdown formatting, no code blocks, no extra text.\n"
+        "Return the exact JSON structure from the tool result:\n"
+        "{\n"
+        '  "title": "Market Trend Analysis",\n'
+        '  "portfolio": { "total_listings": <n>, "types": [...], "total_bookings": <n>, "total_revenue": <n> },\n'
+        '  "trending_types": [{ "type": "...", "listing_count": <n>, "total_bookings": <n>, "total_revenue": <n>, "trend_score": <n> }],\n'
+        '  "recommendations": [{ "type": "...", "status": "...", "message": "...", "advice": "..." }],\n'
+        '  "message": "Market trend analysis complete."\n'
+        "}"
     ),
     tools=[analyze_market_trends],
 )
