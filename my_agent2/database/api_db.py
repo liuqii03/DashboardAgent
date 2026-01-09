@@ -18,26 +18,29 @@ API_BASE_URL = os.getenv("ISHARE_API_URL", "http://localhost:3000")
 
 @dataclass
 class Booking:
-    """Booking data model matching agent expectations."""
-    bookingId: str
+    """Booking data model matching database schema."""
+    id: int  # Integer ID
     listingId: str
-    renterId: str
+    lenderId: int  # The renter/borrower
     startDate: datetime
     endDate: datetime
     totalPrice: float
     status: str
-    paymentTxHash: str
-    appliedPoliciesJson: str
-    appliedInsuranceJson: str
+    paymentTxHash: str = ""
+    appliedPoliciesJson: str = "{}"
+    appliedInsuranceJson: str = "{}"
+    blockchainId: int = None
+    createdAt: datetime = None
+    updatedAt: datetime = None
 
 
 @dataclass
 class Review:
-    """Review data model matching agent expectations."""
-    reviewId: str
-    bookingId: str
-    reviewerId: str
-    reviewedId: str
+    """Review data model matching database schema."""
+    id: str  # UUID
+    bookingId: int  # Integer reference to booking
+    reviewerId: int
+    reviewedId: int
     rating: int
     comment: str
     timestamp: datetime
@@ -48,10 +51,11 @@ class Review:
 class Listing:
     """Listing data model."""
     listingId: str
-    ownerId: str
+    ownerId: int
     title: str
     description: str
     basePrice: float
+    pricePerDay: float  # Added for pricing agent
     status: str
     type: str
     images: List[str] = None
@@ -114,12 +118,15 @@ class APIDatabase:
         if not data:
             return None
         
+        base_price = float(data.get("basePrice", 0))
+        
         return Listing(
             listingId=data.get("id", ""),
-            ownerId=str(data.get("owner", {}).get("id", "") if isinstance(data.get("owner"), dict) else data.get("ownerId", "")),
+            ownerId=int(data.get("owner", {}).get("id", 0) if isinstance(data.get("owner"), dict) else data.get("ownerId", 0)),
             title=data.get("title", ""),
             description=data.get("description", ""),
-            basePrice=float(data.get("basePrice", 0)),
+            basePrice=base_price,
+            pricePerDay=base_price,  # Use basePrice as pricePerDay
             status=data.get("status", ""),
             type=data.get("type", ""),
             images=data.get("images", []),
@@ -133,37 +140,47 @@ class APIDatabase:
         if not data:
             return []
         
-        return [
-            Listing(
+        listings = []
+        for item in data:
+            base_price = float(item.get("basePrice", 0))
+            listings.append(Listing(
                 listingId=item.get("id", ""),
-                ownerId=str(item.get("ownerId", "")),
+                ownerId=int(item.get("ownerId", 0)),
                 title=item.get("title", ""),
                 description=item.get("description", ""),
-                basePrice=float(item.get("basePrice", 0)),
+                basePrice=base_price,
+                pricePerDay=base_price,
                 status=item.get("status", ""),
                 type=item.get("type", ""),
                 images=item.get("images", []),
                 discountPercent=self._discount_cache.get(item.get("id", ""), 0.0)
-            )
-            for item in data
-        ]
+            ))
+        return listings
 
     def get_bookings(self, listing_id: str) -> List[Booking]:
         """
         Retrieve all bookings for a listing.
         
+        Database schema:
+        startDate, endDate, totalPrice, status, paymentTxHash, 
+        appliedPoliciesJson, appliedInsuranceJson, listingId, 
+        blockchainId, lenderId, id, createdAt, updatedAt
+        
         :param listing_id: UUID of the listing
         :return: List of Booking objects
         """
         # Try to get bookings from the API
-        data = self._get(f"/bookings?listing_id={listing_id}")
+        data = self._get(f"/bookings?listingId={listing_id}")
         
         if not data:
-            # Try alternative endpoint
+            # Try alternative endpoint - get all and filter
             data = self._get(f"/bookings")
             if data:
-                # Filter by listing_id
-                data = [b for b in data if b.get("listing_id") == listing_id or b.get("listingId") == listing_id]
+                # Filter by listing_id (check both camelCase and snake_case)
+                data = [b for b in data if 
+                        b.get("listingId") == listing_id or 
+                        b.get("listing_id") == listing_id or
+                        (b.get("listing") and b.get("listing", {}).get("id") == listing_id)]
         
         if not data:
             return []
@@ -172,25 +189,44 @@ class APIDatabase:
         for item in data:
             try:
                 # Parse dates - handle different formats
-                start_date = item.get("start_date") or item.get("startDate")
-                end_date = item.get("end_date") or item.get("endDate")
+                start_date = item.get("startDate") or item.get("start_date")
+                end_date = item.get("endDate") or item.get("end_date")
+                created_at = item.get("createdAt") or item.get("created_at")
+                updated_at = item.get("updatedAt") or item.get("updated_at")
                 
                 if isinstance(start_date, str):
                     start_date = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
                 if isinstance(end_date, str):
                     end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                if isinstance(updated_at, str):
+                    updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                
+                # Get listingId from nested object or direct field
+                booking_listing_id = item.get("listingId") or item.get("listing_id")
+                if not booking_listing_id and item.get("listing"):
+                    booking_listing_id = item.get("listing", {}).get("id", "")
+                
+                # Get lenderId (the renter/borrower)
+                lender_id = item.get("lenderId") or item.get("lender_id")
+                if not lender_id and item.get("lender"):
+                    lender_id = item.get("lender", {}).get("id", 0)
                 
                 bookings.append(Booking(
-                    bookingId=item.get("id", ""),
-                    listingId=item.get("listing_id") or item.get("listingId", ""),
-                    renterId=str(item.get("renter_id") or item.get("renterId", "")),
+                    id=int(item.get("id", 0)),
+                    listingId=booking_listing_id or "",
+                    lenderId=int(lender_id) if lender_id else 0,
                     startDate=start_date,
                     endDate=end_date,
-                    totalPrice=float(item.get("total_price") or item.get("totalPrice", 0)),
+                    totalPrice=float(item.get("totalPrice") or item.get("total_price", 0)),
                     status=item.get("status", "CONFIRMED"),
-                    paymentTxHash=item.get("payment_tx_hash") or item.get("paymentTxHash", ""),
-                    appliedPoliciesJson=str(item.get("applied_policies_json") or item.get("appliedPoliciesJson", "{}")),
-                    appliedInsuranceJson=str(item.get("applied_insurance_json") or item.get("appliedInsuranceJson", "{}"))
+                    paymentTxHash=item.get("paymentTxHash") or item.get("payment_tx_hash", ""),
+                    appliedPoliciesJson=str(item.get("appliedPoliciesJson") or item.get("applied_policies_json", "{}")),
+                    appliedInsuranceJson=str(item.get("appliedInsuranceJson") or item.get("applied_insurance_json", "{}")),
+                    blockchainId=item.get("blockchainId") or item.get("blockchain_id"),
+                    createdAt=created_at,
+                    updatedAt=updated_at
                 ))
             except Exception as e:
                 print(f"Error parsing booking: {e}")
@@ -202,18 +238,14 @@ class APIDatabase:
         """
         Retrieve all reviews for a listing.
         
+        Database schema:
+        id, rating, comment, timestamp, reviewerId, reviewedId, bookingId
+        
         :param listing_id: UUID of the listing
         :return: List of Review objects
         """
-        # Try to get reviews from the API
-        data = self._get(f"/reviews?listing_id={listing_id}")
-        
-        if not data:
-            # Try alternative endpoint
-            data = self._get(f"/reviews")
-            if data:
-                # Filter by listing_id
-                data = [r for r in data if r.get("listing_id") == listing_id or r.get("listingId") == listing_id]
+        # Get reviews for this listing using the correct endpoint
+        data = self._get(f"/reviews/listing/{listing_id}")
         
         if not data:
             return []
@@ -222,19 +254,36 @@ class APIDatabase:
         for item in data:
             try:
                 # Parse timestamp
-                timestamp = item.get("created_at") or item.get("createdAt") or item.get("timestamp")
+                timestamp = item.get("timestamp") or item.get("created_at") or item.get("createdAt")
                 if isinstance(timestamp, str):
                     timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                 elif timestamp is None:
                     timestamp = datetime.now()
                 
+                # Get bookingId - handle nested booking object
+                booking_id = item.get("bookingId") or item.get("booking_id")
+                if item.get("booking") and isinstance(item.get("booking"), dict):
+                    booking_id = item.get("booking", {}).get("id", 0)
+                elif booking_id and isinstance(booking_id, dict):
+                    booking_id = booking_id.get("id", 0)
+                
+                # Get reviewerId - handle nested reviewer object
+                reviewer_id = item.get("reviewerId") or item.get("reviewer_id")
+                if item.get("reviewer") and isinstance(item.get("reviewer"), dict):
+                    reviewer_id = item.get("reviewer", {}).get("id", 0)
+                
+                # Get reviewedId - handle nested reviewed object
+                reviewed_id = item.get("reviewedId") or item.get("reviewed_id")
+                if item.get("reviewed") and isinstance(item.get("reviewed"), dict):
+                    reviewed_id = item.get("reviewed", {}).get("id", 0)
+                
                 reviews.append(Review(
-                    reviewId=item.get("id", ""),
-                    bookingId=item.get("booking_id") or item.get("bookingId", ""),
-                    reviewerId=str(item.get("reviewer_id") or item.get("reviewerId", "")),
-                    reviewedId=str(item.get("reviewed_user_id") or item.get("reviewedUserId", "")),
+                    id=item.get("id", ""),
+                    bookingId=int(booking_id) if booking_id else 0,
+                    reviewerId=int(reviewer_id) if reviewer_id else 0,
+                    reviewedId=int(reviewed_id) if reviewed_id else 0,
                     rating=int(item.get("rating", 0)),
-                    comment=item.get("comment", ""),
+                    comment=item.get("comment", "") or "",
                     timestamp=timestamp,
                     flagged=item.get("flagged", False)
                 ))
@@ -262,20 +311,22 @@ class APIDatabase:
         if not user_data or "listings" not in user_data:
             return []
         
-        return [
-            Listing(
+        listings = []
+        for item in user_data.get("listings", []):
+            base_price = float(item.get("basePrice", 0))
+            listings.append(Listing(
                 listingId=item.get("id", ""),
-                ownerId=str(owner_id),
+                ownerId=owner_id,
                 title=item.get("title", ""),
                 description=item.get("description", ""),
-                basePrice=float(item.get("basePrice", 0)),
+                basePrice=base_price,
+                pricePerDay=base_price,
                 status=item.get("status", ""),
                 type=item.get("type", ""),
                 images=item.get("images", []),
                 discountPercent=self._discount_cache.get(item.get("id", ""), 0.0)
-            )
-            for item in user_data.get("listings", [])
-        ]
+            ))
+        return listings
 
     def update_listing_price(self, listing_id: str, increase_percent: float) -> Dict[str, Any]:
         """
