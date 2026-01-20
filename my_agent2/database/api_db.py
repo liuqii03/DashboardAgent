@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 
 
 # Base URL for the iShare API
-API_BASE_URL = os.getenv("ISHARE_API_URL", "http://localhost:3000")
+ISHARE_API_URL = os.getenv("ISHARE_API_URL", "http://localhost:3000")
 
 
 @dataclass
@@ -70,36 +70,36 @@ class APIDatabase:
 
     def __init__(self, base_url: str = None):
         """Initialize with API base URL."""
-        self.base_url = base_url or API_BASE_URL
+        self.base_url = base_url or ISHARE_API_URL
         self._client = httpx.Client(timeout=30.0)
         
         # Cache for discount percent (temporary storage)
         self._discount_cache: Dict[str, float] = {}
 
-    def _get(self, endpoint: str) -> Any:
+    def _get(self, endpoint: str, headers: Dict = None) -> Any:
         """Make a GET request to the API."""
         try:
-            response = self._client.get(f"{self.base_url}{endpoint}")
+            response = self._client.get(f"{self.base_url}{endpoint}", headers=headers)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             print(f"API Error: {e}")
             return None
 
-    def _post(self, endpoint: str, data: Dict) -> Any:
+    def _post(self, endpoint: str, data: Dict, headers: Dict = None) -> Any:
         """Make a POST request to the API."""
         try:
-            response = self._client.post(f"{self.base_url}{endpoint}", json=data)
+            response = self._client.post(f"{self.base_url}{endpoint}", json=data, headers=headers)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             print(f"API Error: {e}")
             return None
 
-    def _patch(self, endpoint: str, data: Dict) -> Any:
+    def _patch(self, endpoint: str, data: Dict, headers: Dict = None) -> Any:
         """Make a PATCH request to the API."""
         try:
-            response = self._client.patch(f"{self.base_url}{endpoint}", json=data)
+            response = self._client.patch(f"{self.base_url}{endpoint}", json=data, headers=headers)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -157,7 +157,7 @@ class APIDatabase:
             ))
         return listings
 
-    def get_bookings(self, listing_id: str) -> List[Booking]:
+    def get_bookings(self, listing_id: str, token_id: str) -> List[Booking]:
         """
         Retrieve all bookings for a listing.
         
@@ -167,11 +167,13 @@ class APIDatabase:
         blockchainId, lenderId, id, createdAt, updatedAt
         
         :param listing_id: UUID of the listing
+        :param token_id: Authentication token (Required)
         :return: List of Booking objects
         """
         # Get ALL bookings and filter client-side
         # (API's ?listingId= filter doesn't work properly)
-        data = self._get(f"/bookings")
+        headers = {"Authorization": f"Bearer {token_id}"}
+        data = self._get(f"/bookings", headers=headers)
         
         if data:
             # Filter by listing_id - check nested listing object or direct field
@@ -232,14 +234,16 @@ class APIDatabase:
         
         return bookings
 
-    def get_all_bookings(self) -> List[Booking]:
+    def get_all_bookings(self, token_id: str) -> List[Booking]:
         """
         Retrieve ALL bookings from the database.
         Useful for market analysis across all listings.
         
+        :param token_id: Authentication token (Required)
         :return: List of all Booking objects
         """
-        data = self._get(f"/bookings")
+        headers = {"Authorization": f"Bearer {token_id}"}
+        data = self._get(f"/bookings", headers=headers)
         
         if not data:
             return []
@@ -387,12 +391,13 @@ class APIDatabase:
             ))
         return listings
 
-    def update_listing_price(self, listing_id: str, increase_percent: float) -> Dict[str, Any]:
+    def update_listing_price(self, listing_id: str, increase_percent: float, token_id: str) -> Dict[str, Any]:
         """
         Update the base price of a listing.
         
         :param listing_id: UUID of the listing
         :param increase_percent: Percentage to increase price by
+        :param token_id: Authentication token (Required)
         :return: Status dictionary
         """
         # Get current listing
@@ -404,7 +409,8 @@ class APIDatabase:
         new_price = old_price * (1 + increase_percent / 100)
         
         # Update via API
-        result = self._patch(f"/listings/{listing_id}", {"basePrice": new_price})
+        headers = {"Authorization": f"Bearer {token_id}"}
+        result = self._patch(f"/listings/{listing_id}", {"basePrice": new_price}, headers=headers)
         
         if result:
             return {

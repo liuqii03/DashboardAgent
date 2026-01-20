@@ -45,6 +45,7 @@ class CardActionRequest:
     listing_id: Optional[str] = None
     owner_id: Optional[int] = None
     new_price: Optional[float] = None
+    token_id: str = None
 
 
 @dataclass 
@@ -109,7 +110,7 @@ def process_card_action(request: CardActionRequest) -> CardActionResponse:
                     error="listing_id is required for pricing analysis"
                 )
             
-            result = analyze_pricing(request.listing_id)
+            result = analyze_pricing(request.listing_id, request.token_id)
             
             # Show action button if price change is recommended
             show_button = result.get("can_take_action", False)
@@ -133,7 +134,7 @@ def process_card_action(request: CardActionRequest) -> CardActionResponse:
                     error="listing_id and new_price are required to apply price change"
                 )
             
-            result = apply_price_change(request.listing_id, request.new_price)
+            result = apply_price_change(request.listing_id, request.new_price, request.token_id)
             
             return CardActionResponse(
                 success=result.get("success", False),
@@ -154,7 +155,7 @@ def process_card_action(request: CardActionRequest) -> CardActionResponse:
                     error="owner_id is required for market analysis"
                 )
             
-            result = analyze_market_trends(request.owner_id)
+            result = analyze_market_trends(request.owner_id, request.token_id)
             
             return CardActionResponse(
                 success=True,

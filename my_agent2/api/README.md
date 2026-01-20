@@ -93,7 +93,8 @@ POST /pricing/analyze
 Content-Type: application/json
 
 {
-  "listing_id": "fdc645fe-c17a-48c6-9ad5-44a908238694"
+  "listing_id": "fdc645fe-c17a-48c6-9ad5-44a908238694",
+  "token_id": "your-auth-token"
 }
 ```
 
@@ -137,7 +138,8 @@ Content-Type: application/json
 
 {
   "listing_id": "fdc645fe-c17a-48c6-9ad5-44a908238694",
-  "new_price": 105.0
+  "new_price": 105.0,
+  "token_id": "your-auth-token"
 }
 ```
 
@@ -171,7 +173,8 @@ POST /market/analyze
 Content-Type: application/json
 
 {
-  "owner_id": 1
+  "owner_id": 1,
+  "token_id": "your-auth-token"
 }
 ```
 
@@ -288,7 +291,7 @@ const PricingCard = ({ listingId }) => {
     const response = await fetch('http://localhost:8001/pricing/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ listing_id: listingId })
+      body: JSON.stringify({ listing_id: listingId, token_id: 'your-auth-token' })
     });
     setAnalysis(await response.json());
   };
@@ -299,7 +302,8 @@ const PricingCard = ({ listingId }) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         listing_id: listingId,
-        new_price: analysis.data.suggested_price
+        new_price: analysis.data.suggested_price,
+        token_id: 'your-auth-token'
       })
     });
     const result = await response.json();

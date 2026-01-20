@@ -17,7 +17,7 @@ from collections import defaultdict
 from ..database.api_db import api_db as db
 
 
-def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
+def analyze_market_trends(owner_id: int, token_id: str) -> Dict[str, Any]:
     """
     Analyze market trends to identify trending listing types and provide suggestions.
 
@@ -29,6 +29,7 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
     5. Provide priority recommendations
 
     :param owner_id: ID of the owner to analyze
+    :param token_id: Authentication token (Required)
     :return: Dictionary with market trends and recommendations
     """
     # Get all listings in the market
@@ -47,7 +48,7 @@ def analyze_market_trends(owner_id: int) -> Dict[str, Any]:
         }
     
     # Get ALL bookings once (more efficient than calling per listing)
-    all_bookings = db.get_all_bookings()
+    all_bookings = db.get_all_bookings(token_id)
     
     # Group bookings by listing ID for quick lookup
     bookings_by_listing: Dict[str, List] = defaultdict(list)

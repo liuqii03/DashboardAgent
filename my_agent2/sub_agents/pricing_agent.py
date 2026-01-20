@@ -20,7 +20,7 @@ from ..database.api_db import api_db as db
 MALAYSIA_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
-def analyze_pricing(listing_id: str) -> Dict[str, Any]:
+def analyze_pricing(listing_id: str, token_id: str) -> Dict[str, Any]:
     """
     Analyze pricing for a listing and provide recommendations.
 
@@ -31,9 +31,10 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
     4. Output: current price, suggested price, reasons, notes
 
     :param listing_id: Identifier of the listing to analyze
+    :param token_id: Authentication token (Required)
     :return: Dictionary with pricing analysis and recommendations
     """
-    bookings = db.get_bookings(listing_id)
+    bookings = db.get_bookings(listing_id, token_id)
     listing = db.get_listing(listing_id)
     
     if not listing:
@@ -218,13 +219,14 @@ def analyze_pricing(listing_id: str) -> Dict[str, Any]:
     }
 
 
-def apply_price_change(listing_id: str, new_price: float) -> Dict[str, Any]:
+def apply_price_change(listing_id: str, new_price: float, token_id: str) -> Dict[str, Any]:
     """
     Apply the suggested price change to a listing.
     This is called when user clicks "Take Action" button.
 
     :param listing_id: Identifier of the listing to update
     :param new_price: The new price to set
+    :param token_id: Authentication token (Required)
     :return: Dictionary with update result
     """
     listing = db.get_listing(listing_id)
@@ -244,7 +246,7 @@ def apply_price_change(listing_id: str, new_price: float) -> Dict[str, Any]:
         percent_change = 0
     
     # Call the database update function
-    result = db.update_listing_price(listing_id, percent_change)
+    result = db.update_listing_price(listing_id, percent_change, token_id)
     
     if result.get("status") == "success":
         return {

@@ -51,6 +51,7 @@ app.add_middleware(
 class PricingAnalyzeRequest(BaseModel):
     """Request to analyze pricing for a listing."""
     listing_id: str
+    token_id: str
     
     class Config:
         json_schema_extra = {
@@ -64,6 +65,7 @@ class PricingApplyRequest(BaseModel):
     """Request to apply price change."""
     listing_id: str
     new_price: float
+    token_id: str
     
     class Config:
         json_schema_extra = {
@@ -77,6 +79,7 @@ class PricingApplyRequest(BaseModel):
 class MarketAnalyzeRequest(BaseModel):
     """Request to analyze market trends for an owner."""
     owner_id: int
+    token_id: str
     
     class Config:
         json_schema_extra = {
@@ -159,7 +162,8 @@ def analyze_pricing(request: PricingAnalyzeRequest):
     """
     card_request = CardActionRequest(
         action_code=ActionCode.PRICING_ANALYZE.value,
-        listing_id=request.listing_id
+        listing_id=request.listing_id,
+        token_id=request.token_id
     )
     
     response = process_card_action(card_request)
@@ -182,7 +186,8 @@ def apply_pricing(request: PricingApplyRequest):
     card_request = CardActionRequest(
         action_code=ActionCode.PRICING_APPLY.value,
         listing_id=request.listing_id,
-        new_price=request.new_price
+        new_price=request.new_price,
+        token_id=request.token_id
     )
     
     response = process_card_action(card_request)
@@ -205,7 +210,8 @@ def analyze_market(request: MarketAnalyzeRequest):
     """
     card_request = CardActionRequest(
         action_code=ActionCode.MARKET_ANALYZE.value,
-        owner_id=request.owner_id
+        owner_id=request.owner_id,
+        token_id=request.token_id
     )
     
     response = process_card_action(card_request)

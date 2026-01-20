@@ -48,7 +48,7 @@ ACTION_CODE_CONFIG: Dict[str, Dict[str, Any]] = {
         "agent": "PricingAgent",
         "tool": "analyze_pricing",
         "description": "Analyze demand and get pricing recommendations",
-        "required_params": ["listing_id"],
+        "required_params": ["listing_id", "token_id"],
         "has_action_button": True,  # Shows "Take Action" if price change recommended
         "card_type": "pricing"
     },
@@ -57,7 +57,7 @@ ACTION_CODE_CONFIG: Dict[str, Dict[str, Any]] = {
         "agent": "PricingAgent",
         "tool": "apply_price_change",
         "description": "Apply the suggested price change to database",
-        "required_params": ["listing_id", "new_price"],
+        "required_params": ["listing_id", "new_price", "token_id"],
         "has_action_button": False,
         "card_type": "pricing",
         "is_write_action": True  # This action modifies database
@@ -68,7 +68,7 @@ ACTION_CODE_CONFIG: Dict[str, Dict[str, Any]] = {
         "agent": "DemandTrendAgent",
         "tool": "analyze_market_trends",
         "description": "Analyze market trends and get recommendations",
-        "required_params": ["owner_id"],
+        "required_params": ["owner_id", "token_id"],
         "has_action_button": False,  # Read-only
         "card_type": "demand"
     },

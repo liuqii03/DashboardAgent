@@ -23,8 +23,9 @@ from dataclasses import dataclass
 API_BASE_URL = "http://localhost:8001"
 
 # Test data - update these with valid IDs from your database
-TEST_LISTING_ID = "fdc645fe-c17a-48c6-9ad5-44a908238694"
+TEST_LISTING_ID = "6e4a0dad-57ac-4d4b-8a9b-4dc23b21bf6b"
 TEST_OWNER_ID = 1
+TEST_TOKEN_ID = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImQ4Mjg5MmZhMzJlY2QxM2E0ZTBhZWZlNjI4ZGQ5YWFlM2FiYThlMWUiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL3NlY3VyZXRva2VuLmdvb2dsZS5jb20vaXNoYXJlLTc0YTZkIiwiYXVkIjoiaXNoYXJlLTc0YTZkIiwiYXV0aF90aW1lIjoxNzY3OTgwMTk5LCJ1c2VyX2lkIjoiUW1rWksxSDNiSWMwMWdtclpxa1ZUSnRTbEtHMyIsInN1YiI6IlFta1pLMUgzYkljMDFnbXJacWtWVEp0U2xLRzMiLCJpYXQiOjE3Njc5ODAxOTksImV4cCI6MTc2Nzk4Mzc5OSwiZW1haWwiOiJqb2huQGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjpmYWxzZSwiZmlyZWJhc2UiOnsiaWRlbnRpdGllcyI6eyJlbWFpbCI6WyJqb2huQGdtYWlsLmNvbSJdfSwic2lnbl9pbl9wcm92aWRlciI6InBhc3N3b3JkIn19.iZQFRi5_jagHDNFrWXtSl_WAaTcIuZjA191v02nr5y-q2JAaK-DjPD9aU76rGnk6D9uAEH5i8KnInX7dWaXUhjehZmd30PUyaQexCDOF_bKwLS3AWrkk6XXmig3MJbyVB17OdtuYsOjV2dfL8QK5XlB_7YaGRtY1V38wx0ed8V4Vsh8mTbkkXwmZK951kHtJ9arJDH1FrPlEIZYQ1RLhBviObuM5bpeml7hJuTIBOIYNVESr4CZ1zv-Vll_EPFY8bDkhRA26EEY48Lb7HsGfptB2LDsaEyrCCOYppKrSkCBuWLu8X13PL4ljwXNxMZa_LVtOPl4Rnpiya04QMsuPTA"
 
 
 @dataclass
@@ -118,7 +119,7 @@ def test_pricing_analyze() -> TestResult:
     try:
         response = requests.post(
             f"{API_BASE_URL}/pricing/analyze",
-            json={"listing_id": TEST_LISTING_ID},
+            json={"listing_id": TEST_LISTING_ID, "token_id": TEST_TOKEN_ID},
             headers={"Content-Type": "application/json"}
         )
         data = response.json()
@@ -151,7 +152,7 @@ def test_pricing_analyze_missing_param() -> TestResult:
     try:
         response = requests.post(
             f"{API_BASE_URL}/pricing/analyze",
-            json={},
+            json={"token_id": TEST_TOKEN_ID},
             headers={"Content-Type": "application/json"}
         )
         
@@ -190,7 +191,8 @@ def test_pricing_apply() -> TestResult:
             f"{API_BASE_URL}/pricing/apply",
             json={
                 "listing_id": TEST_LISTING_ID,
-                "new_price": suggested_price
+                "new_price": suggested_price,
+                "token_id": TEST_TOKEN_ID
             },
             headers={"Content-Type": "application/json"}
         )
@@ -224,7 +226,7 @@ def test_market_analyze() -> TestResult:
     try:
         response = requests.post(
             f"{API_BASE_URL}/market/analyze",
-            json={"owner_id": TEST_OWNER_ID},
+            json={"owner_id": TEST_OWNER_ID, "token_id": TEST_TOKEN_ID},
             headers={"Content-Type": "application/json"}
         )
         data = response.json()
@@ -292,7 +294,7 @@ def test_invalid_listing_id() -> TestResult:
     try:
         response = requests.post(
             f"{API_BASE_URL}/pricing/analyze",
-            json={"listing_id": "invalid-id-12345"},
+            json={"listing_id": "invalid-id-12345", "token_id": TEST_TOKEN_ID},
             headers={"Content-Type": "application/json"}
         )
         data = response.json()
@@ -378,9 +380,9 @@ def run_quick_test():
     endpoints = [
         ("GET", "/", None),
         ("GET", "/action-codes", None),
-        ("POST", "/pricing/analyze", {"listing_id": TEST_LISTING_ID}),
-        ("POST", "/pricing/apply", {"listing_id": TEST_LISTING_ID, "new_price": 100.0}),
-        ("POST", "/market/analyze", {"owner_id": TEST_OWNER_ID}),
+        ("POST", "/pricing/analyze", {"listing_id": TEST_LISTING_ID, "token_id": TEST_TOKEN_ID}),
+        ("POST", "/pricing/apply", {"listing_id": TEST_LISTING_ID, "new_price": 100.0, "token_id": TEST_TOKEN_ID}),
+        ("POST", "/market/analyze", {"owner_id": TEST_OWNER_ID, "token_id": TEST_TOKEN_ID}),
         ("POST", "/review/analyze", {"listing_id": TEST_LISTING_ID}),
     ]
     
